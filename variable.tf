@@ -25,3 +25,7 @@ variable "admin_username" {
 variable "admin_password" {
     default = "Password@12345!"
 }
+
+variable "subscription_id" {
+    type       = string
+}
