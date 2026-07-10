@@ -9,10 +9,14 @@ steps:
   inputs:
     terraformVersion: latest
 
-- script: |
-    cd terraform
-    terraform init
-    terraform validate
-    terraform plan
-    terraform apply
+- task: AzureCLI@2
+  inputs:
+    azureSubscription: 'MyConnection'
+    scriptType: 'bash'
+    scriptLocation: 'inlineScript'
+    inlineScript: |
+      terraform init
+      terraform validate
+      terraform plan
+      terraform apply -auto-approve
   displayName: 'Terraform init, validate, plan and apply'
