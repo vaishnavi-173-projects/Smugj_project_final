@@ -47,8 +47,27 @@ stages:
                 fi
                 
                 # We use a static name with a unique identifier to ensure it works across runs
-                az storage account create --name $(tfStateStorageAccount) --resource-group $(tfStateResourceGroup) --sku Standard_LRS --encryption-services blob
-                az storage container create --name $(tfStateContainer) --account-name $(tfStateStorageAccount)
+                if ! az storage account show --name $(tfStateStorageAccount) --resource-group $(tfStateResourceGroup) >/dev/null 2>&1; then
+                    az storage account create \
+                      --name $(tfStateStorageAccount) \
+                      --resource-group $(tfStateResourceGroup) \
+                      --location southeastasia \
+                      --sku Standard_LRS \
+                      --kind StorageV2 \
+                      --https-only true \
+                      --min-tls-version TLS1_2 \
+                      --encryption-services blob
+                fi
+                
+                ACCOUNT_KEY=$(az storage account keys list \
+                    --resource-group $(tfStateResourceGroup) \
+                    --account-name $(tfStateStorageAccount) \
+                    --query "[0].value" -o tsv)
+
+                az storage container create \
+                    --name $(tfStateContainer) \
+                    --account-name $(tfStateStorageAccount) \
+                    --account-key "$ACCOUNT_KEY"
 
                 # 2. Install Terraform
                 echo "[INFO] Installing Terraform..."
