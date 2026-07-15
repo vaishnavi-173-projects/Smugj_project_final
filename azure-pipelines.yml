@@ -4,19 +4,119 @@ trigger:
 pool:
   vmImage: 'ubuntu-latest'
 
-steps:
-- task: TerraformInstaller@1
-  inputs:
-    terraformVersion: latest
+trigger:
+  - main
 
-- task: AzureCLI@2
-  inputs:
-    azureSubscription: 'MyConnection'
-    scriptType: 'bash'
-    scriptLocation: 'inlineScript'
-    inlineScript: |
-      terraform init
-      terraform validate
-      terraform plan
-      terraform apply -auto-approve
-  displayName: 'Terraform init, validate, plan and apply'
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  # 1. Update these exactly to match the Azure resources created by your Terraform steps
+  azureServiceConnection: 'YOUR_AZURE_DEVOPS_SERVICE_CONNECTION_NAME' # Replace with your exact Service Connection name
+  resourceGroupName: 'Smugj_Project_RG'
+  acrName: 'smugjacr2026' # Must match your terraform.tfvars value
+  imageRepository: 'flask-app'
+  containerName: 'flask-app-prod'
+  dockerfilePath: '$(Build.SourcesDirectory)/Dockerfile'
+  tag: '$(Build.BuildId)'
+
+stages:
+  # -------------------------------------------------------------
+  # STAGE 1: Build and Push Docker Image to Azure Container Registry
+  # -------------------------------------------------------------
+  - stage: Build
+    displayName: 'CI: Build & Push to ACR'
+    jobs:
+      - job: BuildAndPush
+        displayName: 'Build and Push'
+        steps:
+          # Get the login credentials dynamically from your Azure subscription
+          - task: AzureCLI@2
+            displayName: 'Docker Login to ACR'
+            inputs:
+              azureSubscription: '$(azureServiceConnection)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                az acr login --name $(acrName)
+
+          # Build the production Docker image using the Dockerfile we fixed
+          - task: Docker@2
+            displayName: 'Build Docker Image'
+            inputs:
+              repository: '$(acrName).azurecr.io/$(imageRepository)'
+              command: 'build'
+              Dockerfile: '$(dockerfilePath)'
+              tags: |
+                $(tag)
+                latest
+
+          # Push the built image directly to your private Azure Container Registry
+          - task: Docker@2
+            displayName: 'Push Image to ACR'
+            inputs:
+              repository: '$(acrName).azurecr.io/$(imageRepository)'
+              command: 'push'
+              tags: |
+                $(tag)
+                latest
+
+  # -------------------------------------------------------------
+  # STAGE 2: Deploy Container onto the Virtual Machine
+  # -------------------------------------------------------------
+  - stage: Deploy
+    displayName: 'CD: Deploy to Azure Virtual Machine'
+    dependsOn: Build
+    condition: succeeded()
+    jobs:
+      - job: DeployToVM
+        displayName: 'Pull and Run Container on VM'
+        steps:
+          # We use the Azure CLI task to run commands on your public VM interface safely
+          - task: AzureCLI@2
+            displayName: 'Deploy Application via Azure CLI Script'
+            inputs:
+              azureSubscription: '$(azureServiceConnection)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                # 1. Dynamically retrieve the VM's Public IP from Azure to avoid hardcoding
+                VM_IP=$(az network public-ip show --resource-group $(resourceGroupName) --name smugj-vm-ip --query ipAddress --output tsv)
+                echo "Target deployment VM IP is: $VM_IP"
+
+                # 2. Extract ACR credentials so the remote VM can access the private registry images
+                ACR_USER=$(az acr credential show --name $(acrName) --query username --output tsv)
+                ACR_PASS=$(az acr credential show --name $(acrName) --query passwords[0].value --output tsv)
+
+                # 3. Use the Azure CLI run-command mechanism to safely execute shell scripts inside the VM
+                # This bypasses blocking local firewall limitations on your Windows client machine
+                az vm run-command invoke \
+                  --resource-group $(resourceGroupName) \
+                  --name smugj-flask-vm \
+                  --command-id RunShellScript \
+                  --scripts "
+                    # Wait for Docker to finish installing from the background custom_data script if needed
+                    while ! command -v docker &> /dev/null; do
+                      echo 'Waiting for Docker installation engine...'
+                      sleep 5
+                    done
+
+                    # Authenticate the local VM's daemon with your private Azure Registry
+                    sudo docker login $(acrName).azurecr.io -u $ACR_USER -p $ACR_PASS
+
+                    # Stop and remove any prior running instances to avoid port collision errors
+                    sudo docker stop $(containerName) || true
+                    sudo docker rm $(containerName) || true
+
+                    # Pull down the latest fresh image build copy from the cloud registry
+                    sudo docker pull $(acrName).azurecr.io/$(imageRepository):latest
+
+                    # Spin up the new application container mapping port 5000 externally
+                    sudo docker run -d \
+                      --name $(containerName) \
+                      -p 5000:5000 \
+                      --restart always \
+                      $(acrName).azurecr.io/$(imageRepository):latest
+
+                    echo 'Container deployment verified and running!'
+                  "
