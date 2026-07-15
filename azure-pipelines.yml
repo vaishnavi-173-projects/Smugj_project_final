@@ -76,10 +76,21 @@ stages:
                 sudo apt-get update -y && sudo apt-get install -y terraform
 
                 # 3. Export credentials for Terraform AzureRM Provider
-                export ARM_CLIENT_ID=$servicePrincipalId
-                export ARM_CLIENT_SECRET=$servicePrincipalKey
-                export ARM_TENANT_ID=$tenantId
+                # Supports both Workload Identity Federation (OIDC) and Service Principal with Secret
+                export ARM_CLIENT_ID="$servicePrincipalId"
+                export ARM_TENANT_ID="$tenantId"
                 export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+
+                # Use OIDC token if available (Workload Identity Federation),
+                # otherwise fall back to client secret (Service Principal with secret)
+                if [ -n "$idToken" ]; then
+                  echo "[INFO] Authenticating Terraform via Workload Identity Federation (OIDC)"
+                  export ARM_USE_OIDC=true
+                  export ARM_OIDC_TOKEN="$idToken"
+                else
+                  echo "[INFO] Authenticating Terraform via Service Principal (Client Secret)"
+                  export ARM_CLIENT_SECRET="$servicePrincipalKey"
+                fi
 
                 # 4. Terraform Execution
                 echo "[INFO] Running Terraform Init..."
