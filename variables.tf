@@ -31,3 +31,9 @@ variable "admin_password" {
   description = "Admin password for the VM"
   sensitive   = true
 }
+
+variable "vm_size" {
+  type        = string
+  description = "Size of the Virtual Machine"
+  default     = "Standard_B2als_v2"
+}
