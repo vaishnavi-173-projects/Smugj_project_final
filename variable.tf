@@ -1,6 +1,11 @@
+variable "subscription_id" {
+  type        = string
+  description = "The Azure Subscription ID used by the provider"
+}
+
 variable "resource_group_name" {
- type        = string
- description = "Name of the resource group"
+  type        = string
+  description = "Name of the resource group"
 }
 
 variable "location" {
