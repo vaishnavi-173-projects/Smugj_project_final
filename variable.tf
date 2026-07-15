@@ -1,31 +1,27 @@
 variable "resource_group_name" {
-    default = "my-resource-group1"
+ type        = string
+ description = "Name of the resource group"
 }
 
 variable "location" {
-    default = "Central India"
+  type        = string
+  description = "Azure region for resources"
+  default     = "East US"
 }
 
-variable "vnet_name" {
-    default = "my-vnet1"
-}
-
-variable "subnet_name" {
-    default = "my-subnet1"
+variable "acr_name" {
+  type        = string
+  description = "Name of the Azure Container Registry (Must be globally unique, lowercase alphanumeric only)"
 }
 
 variable "vm_name" {
-    default = "MyVM1"
+  type        = string
+  description = "Name of the Virtual Machine"
+  default     = "smugj-flask-vm"
 }
 
 variable "admin_username" {
-    default = "azureuser"
-}
-
-variable "admin_password" {
-    default = "Password@12345!"
-}
-
-variable "subscription_id" {
-    type       = string
+  type        = string
+  description = "Admin username for the VM"
+  default     = "azureuser"
 }
