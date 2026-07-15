@@ -31,8 +31,3 @@ variable "admin_password" {
   description = "Admin password for the VM"
   sensitive   = true
 }
-
-variable "subscription_id" {
-  type        = string
-  description = "The Azure Subscription ID used by the provider"
-}

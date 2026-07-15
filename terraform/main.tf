@@ -118,9 +118,9 @@ resource "azurerm_linux_virtual_machine" "vm" {
   location            = azurerm_resource_group.rg.location
   size                = "Standard_B1s"
   admin_username      = var.admin_username
-  
+
   disable_password_authentication = false
-  admin_password                  = "Password12345!" # Use your chosen secure string here
+  admin_password                  = var.admin_password
 
   network_interface_ids = [
     azurerm_network_interface.nic.id,
@@ -141,13 +141,19 @@ resource "azurerm_linux_virtual_machine" "vm" {
   custom_data = base64encode(<<-EOF
               #!/bin/bash
               sudo apt-get update -y
-              sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common
-              curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
-              sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+              sudo apt-get install -y ca-certificates curl
+              sudo install -m 0755 -d /etc/apt/keyrings
+              sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+              sudo chmod a+r /etc/apt/keyrings/docker.asc
+              echo \
+                "deb [arch=$$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+                $$(. /etc/os-release && echo "$$VERSION_CODENAME") stable" | \
+                sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
               sudo apt-get update -y
-              sudo apt-get install -y docker-ce
+              sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
               sudo systemctl start docker
               sudo systemctl enable docker
+              sudo usermod -aG docker ${var.admin_username}
               EOF
   )
 }
