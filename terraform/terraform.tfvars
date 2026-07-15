@@ -1,0 +1,6 @@
+resource_group_name = "Smugj_Project_RG"
+location            = "East US"
+acr_name            = "smugjacr2026"
+vm_name             = "smugj-flask-vm"
+admin_username      = "azureuser"
+subscription_id     = "2f746031-d747-4853-9a47-46f15c87960c"
