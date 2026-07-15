@@ -1,0 +1,16 @@
+# Terraform state and local files
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.backup
+tfplan
+
+# Sensitive variable files
+*.tfvars.backup
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Azure DevOps
+deploy.sh
