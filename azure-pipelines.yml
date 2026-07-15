@@ -1,10 +1,4 @@
 trigger:
-- main
-
-pool:
-  vmImage: 'ubuntu-latest'
-
-trigger:
   - main
 
 pool:
@@ -12,57 +6,108 @@ pool:
 
 variables:
   # 1. Update these exactly to match the Azure resources created by your Terraform steps
-  azureServiceConnection: 'YOUR_AZURE_DEVOPS_SERVICE_CONNECTION_NAME' # Replace with your exact Service Connection name
+  azureServiceConnection: 'YOUR_AZURE_DEVOPS_SERVICE_CONNECTION_NAME' # 🔴 REPLACE THIS with your exact Service Connection name
   resourceGroupName: 'Smugj_Project_RG'
   acrName: 'smugjacr2026' # Must match your terraform.tfvars value
+  vmName: 'smugj-flask-vm'
   imageRepository: 'flask-app'
   containerName: 'flask-app-prod'
   dockerfilePath: '$(Build.SourcesDirectory)/Dockerfile'
   tag: '$(Build.BuildId)'
+  # Terraform State Configuration
+  tfStateResourceGroup: 'TerraformState_RG'
+  tfStateStorageAccount: 'smugjtfstate2026xyz'
+  tfStateContainer: 'tfstate'
 
 stages:
   # -------------------------------------------------------------
-  # STAGE 1: Build and Push Docker Image to Azure Container Registry
+  # STAGE 1: Provision Infrastructure using Terraform
+  # -------------------------------------------------------------
+  - stage: Terraform
+    displayName: 'Infrastructure: Terraform Plan & Apply'
+    jobs:
+      - job: TerraformJob
+        displayName: 'Deploy Terraform Infrastructure'
+        steps:
+          - task: AzureCLI@2
+            displayName: 'Terraform Init, Validate, Plan, Apply'
+            inputs:
+              azureSubscription: '$(azureServiceConnection)'
+              addSpnToEnvironment: true
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              workingDirectory: '$(System.DefaultWorkingDirectory)'
+              inlineScript: |
+                # 1. Setup Terraform State Backend in Azure
+                echo "Creating Storage Account for Terraform State..."
+                az group create --name $(tfStateResourceGroup) --location "East US"
+                
+                # We use a static name with a unique identifier to ensure it works across runs
+                az storage account create --name $(tfStateStorageAccount) --resource-group $(tfStateResourceGroup) --sku Standard_LRS --encryption-services blob
+                az storage container create --name $(tfStateContainer) --account-name $(tfStateStorageAccount)
+
+                # 2. Install Terraform
+                echo "Installing Terraform..."
+                wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+                echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list > /dev/null
+                sudo apt-get update -y && sudo apt-get install -y terraform
+
+                # 3. Export credentials for Terraform AzureRM Provider
+                export ARM_CLIENT_ID=$servicePrincipalId
+                export ARM_CLIENT_SECRET=$servicePrincipalKey
+                export ARM_TENANT_ID=$tenantId
+                export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+
+                # 4. Terraform Execution
+                echo "Running Terraform Init..."
+                terraform init \
+                  -backend-config="resource_group_name=$(tfStateResourceGroup)" \
+                  -backend-config="storage_account_name=$(tfStateStorageAccount)" \
+                  -backend-config="container_name=$(tfStateContainer)" \
+                  -backend-config="key=terraform.tfstate"
+
+                echo "Running Terraform Validate..."
+                terraform validate
+
+                echo "Running Terraform Plan..."
+                terraform plan -out=tfplan
+
+                echo "Running Terraform Apply..."
+                terraform apply -auto-approve tfplan
+
+  # -------------------------------------------------------------
+  # STAGE 2: Build and Push Docker Image to Azure Container Registry
   # -------------------------------------------------------------
   - stage: Build
     displayName: 'CI: Build & Push to ACR'
+    dependsOn: Terraform
+    condition: succeeded()
     jobs:
       - job: BuildAndPush
         displayName: 'Build and Push'
         steps:
-          # Get the login credentials dynamically from your Azure subscription
           - task: AzureCLI@2
-            displayName: 'Docker Login to ACR'
+            displayName: 'Docker Login, Build, and Push to ACR'
             inputs:
               azureSubscription: '$(azureServiceConnection)'
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
+                # 1. Authenticate to ACR using Azure CLI
+                echo "Logging into ACR: $(acrName)"
                 az acr login --name $(acrName)
 
-          # Build the production Docker image using the Dockerfile we fixed
-          - task: Docker@2
-            displayName: 'Build Docker Image'
-            inputs:
-              repository: '$(acrName).azurecr.io/$(imageRepository)'
-              command: 'build'
-              Dockerfile: '$(dockerfilePath)'
-              tags: |
-                $(tag)
-                latest
+                # 2. Build the production Docker image
+                echo "Building Docker Image..."
+                docker build -t $(acrName).azurecr.io/$(imageRepository):$(tag) -t $(acrName).azurecr.io/$(imageRepository):latest -f $(dockerfilePath) .
 
-          # Push the built image directly to your private Azure Container Registry
-          - task: Docker@2
-            displayName: 'Push Image to ACR'
-            inputs:
-              repository: '$(acrName).azurecr.io/$(imageRepository)'
-              command: 'push'
-              tags: |
-                $(tag)
-                latest
+                # 3. Push the image to ACR
+                echo "Pushing Docker Image to ACR..."
+                docker push $(acrName).azurecr.io/$(imageRepository):$(tag)
+                docker push $(acrName).azurecr.io/$(imageRepository):latest
 
   # -------------------------------------------------------------
-  # STAGE 2: Deploy Container onto the Virtual Machine
+  # STAGE 3: Deploy Container onto the Virtual Machine
   # -------------------------------------------------------------
   - stage: Deploy
     displayName: 'CD: Deploy to Azure Virtual Machine'
@@ -72,7 +117,6 @@ stages:
       - job: DeployToVM
         displayName: 'Pull and Run Container on VM'
         steps:
-          # We use the Azure CLI task to run commands on your public VM interface safely
           - task: AzureCLI@2
             displayName: 'Deploy Application via Azure CLI Script'
             inputs:
@@ -88,35 +132,47 @@ stages:
                 ACR_USER=$(az acr credential show --name $(acrName) --query username --output tsv)
                 ACR_PASS=$(az acr credential show --name $(acrName) --query passwords[0].value --output tsv)
 
-                # 3. Use the Azure CLI run-command mechanism to safely execute shell scripts inside the VM
-                # This bypasses blocking local firewall limitations on your Windows client machine
+                # 3. Generate a secure deployment script to run on the VM
+                # Using positional parameters avoids shell expansion issues with passwords containing special characters
+                cat << 'EOF' > deploy.sh
+                #!/bin/bash
+                ACR_SERVER=$1
+                ACR_USERNAME=$2
+                ACR_PASSWORD=$3
+                CONTAINER_NAME=$4
+                IMAGE_REPO=$5
+
+                # Wait for Docker to finish installing from the background custom_data script if needed
+                while ! command -v docker &> /dev/null; do
+                  echo 'Waiting for Docker installation engine...'
+                  sleep 5
+                done
+
+                # Authenticate the local VM's daemon with your private Azure Registry
+                sudo docker login $ACR_SERVER -u $ACR_USERNAME -p $ACR_PASSWORD
+
+                # Stop and remove any prior running instances to avoid port collision errors
+                sudo docker stop $CONTAINER_NAME || true
+                sudo docker rm $CONTAINER_NAME || true
+
+                # Pull down the latest fresh image build copy from the cloud registry
+                sudo docker pull $ACR_SERVER/$IMAGE_REPO:latest
+
+                # Spin up the new application container mapping port 5000 externally
+                sudo docker run -d \
+                  --name $CONTAINER_NAME \
+                  -p 5000:5000 \
+                  --restart always \
+                  $ACR_SERVER/$IMAGE_REPO:latest
+
+                echo 'Container deployment verified and running!'
+                EOF
+
+                # 4. Use the Azure CLI run-command mechanism to safely execute the shell script inside the VM
+                echo "Executing deployment script on VM..."
                 az vm run-command invoke \
                   --resource-group $(resourceGroupName) \
-                  --name smugj-flask-vm \
+                  --name $(vmName) \
                   --command-id RunShellScript \
-                  --scripts "
-                    # Wait for Docker to finish installing from the background custom_data script if needed
-                    while ! command -v docker &> /dev/null; do
-                      echo 'Waiting for Docker installation engine...'
-                      sleep 5
-                    done
-
-                    # Authenticate the local VM's daemon with your private Azure Registry
-                    sudo docker login $(acrName).azurecr.io -u $ACR_USER -p $ACR_PASS
-
-                    # Stop and remove any prior running instances to avoid port collision errors
-                    sudo docker stop $(containerName) || true
-                    sudo docker rm $(containerName) || true
-
-                    # Pull down the latest fresh image build copy from the cloud registry
-                    sudo docker pull $(acrName).azurecr.io/$(imageRepository):latest
-
-                    # Spin up the new application container mapping port 5000 externally
-                    sudo docker run -d \
-                      --name $(containerName) \
-                      -p 5000:5000 \
-                      --restart always \
-                      $(acrName).azurecr.io/$(imageRepository):latest
-
-                    echo 'Container deployment verified and running!'
-                  "
+                  --scripts @deploy.sh \
+                  --parameters "$(acrName).azurecr.io" "$ACR_USER" "$ACR_PASS" "$(containerName)" "$(imageRepository)"
