@@ -1,3 +1,8 @@
+variable "subscription_id" {
+  type        = string
+  description = "The Azure Subscription ID used by the provider"
+}
+
 terraform {
   required_providers {
     azurerm = {
