@@ -1,5 +1,5 @@
 resource_group_name = "Smugj_Project_RG"
-location            = "East US"
+location            = "southeastasia"
 acr_name            = "smugjacr2026"
 vm_name             = "smugj-flask-vm"
 admin_username      = "azureuser"

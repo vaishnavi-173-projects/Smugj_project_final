@@ -6,7 +6,7 @@ pool:
 
 variables:
   # 1. Update these exactly to match the Azure resources created by your Terraform steps
-  azureServiceConnection: 'YOUR_AZURE_DEVOPS_SERVICE_CONNECTION_NAME' # 🔴 REPLACE THIS with your exact Service Connection name
+  azureServiceConnection: 'Azure-Service-Connection-2'
   resourceGroupName: 'Smugj_Project_RG'
   acrName: 'smugjacr2026' # Must match your terraform.tfvars value
   vmName: 'smugj-flask-vm'
@@ -42,7 +42,9 @@ stages:
 
                 # 1. Setup Terraform State Backend in Azure
                 echo "[INFO] Creating Storage Account for Terraform State..."
-                az group create --name $(tfStateResourceGroup) --location "East US"
+                if ! az group show --name $(tfStateResourceGroup) >/dev/null 2>&1; then
+                    az group create --name $(tfStateResourceGroup) --location "southeastasia"
+                fi
                 
                 # We use a static name with a unique identifier to ensure it works across runs
                 az storage account create --name $(tfStateStorageAccount) --resource-group $(tfStateResourceGroup) --sku Standard_LRS --encryption-services blob
