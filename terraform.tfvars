@@ -1,7 +1,0 @@
-resource_group_name = "Smugj_Project_RG"
-location            = "southeastasia"
-acr_name            = "smugjacr2026"
-vm_name             = "smugj-flask-vm"
-admin_username      = "azureuser"
-admin_password      = "SecurePassword123!@#"
-vm_size             = "Standard_B2als_v2"

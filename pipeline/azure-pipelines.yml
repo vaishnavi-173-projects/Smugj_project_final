@@ -36,7 +36,7 @@ stages:
               addSpnToEnvironment: true
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
-              workingDirectory: '$(System.DefaultWorkingDirectory)'
+              workingDirectory: '$(System.DefaultWorkingDirectory)/terraform'
               inlineScript: |
                 set -e # Fail immediately on errors
 
