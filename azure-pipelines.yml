@@ -182,28 +182,53 @@ stages:
                 CONTAINER_NAME=$4
                 IMAGE_REPO=$5
 
-                # Wait for Docker to finish installing from the background custom_data script if needed
-                while ! command -v docker &> /dev/null; do
-                  echo '[INFO] Waiting for Docker installation engine...'
+                # Wait for Docker to finish installing or install it manually
+                if ! command -v docker &> /dev/null; then
+                  echo '[INFO] Docker not found. Installing...'
+                  sudo apt-get update -y || exit 1
+                  sudo apt-get install -y docker.io || exit 1
+                  sudo systemctl enable docker || exit 1
+                  sudo systemctl start docker || exit 1
+                fi
+
+                MAX_WAIT=60
+                WAIT_COUNT=0
+                while ! sudo docker info &> /dev/null; do
+                  if [ $WAIT_COUNT -ge $MAX_WAIT ]; then
+                    echo '[ERROR] Docker failed to start after 5 minutes.'
+                    sudo systemctl status docker
+                    exit 1
+                  fi
+                  echo '[INFO] Waiting for Docker daemon to start...'
                   sleep 5
+                  WAIT_COUNT=$((WAIT_COUNT+1))
                 done
 
+                echo '[INFO] Docker is running successfully.'
+
                 # Authenticate the local VM's daemon with your private Azure Registry
+                echo '[INFO] Logging into ACR...'
                 sudo docker login $ACR_SERVER -u $ACR_USERNAME -p $ACR_PASSWORD || exit 1
 
                 # Stop and remove any prior running instances to avoid port collision errors
+                echo '[INFO] Stopping and removing old container if it exists...'
                 sudo docker stop $CONTAINER_NAME || true
                 sudo docker rm $CONTAINER_NAME || true
 
                 # Pull down the latest fresh image build copy from the cloud registry
+                echo '[INFO] Pulling the latest image from ACR...'
                 sudo docker pull $ACR_SERVER/$IMAGE_REPO:latest || exit 1
 
                 # Spin up the new application container mapping port 5000 externally
+                echo '[INFO] Starting new container...'
                 sudo docker run -d \
                   --name $CONTAINER_NAME \
                   -p 5000:5000 \
                   --restart always \
                   $ACR_SERVER/$IMAGE_REPO:latest || exit 1
+
+                echo '[INFO] Showing running containers:'
+                sudo docker ps
 
                 echo '[INFO] Container deployment verified and running!'
                 EOF
@@ -215,4 +240,5 @@ stages:
                   --name $(vmName) \
                   --command-id RunShellScript \
                   --scripts @deploy.sh \
-                  --parameters "$(acrName).azurecr.io" "$ACR_USER" "$ACR_PASS" "$(containerName)" "$(imageRepository)" || exit 1
+                  --parameters "$(acrName).azurecr.io" "$ACR_USER" "$ACR_PASS" "$(containerName)" "$(imageRepository)" \
+                  -o json || exit 1
