@@ -150,13 +150,19 @@ The continuous integration and deployment logic is defined in `pipeline/azure-pi
 *(Add architecture screenshot here)*
 
 ### Pipeline Success
-*(Add Azure DevOps pipeline success screenshot here)*
+![Azure DevOps Pipeline Success](docs/images/pipeline-success.png)
 
 ### Azure Resources
-*(Add Azure portal resources screenshot here)*
+![Azure Resource Group Overview](docs/images/azure-resource-group.png)
 
-### Running Application
-*(Add live application screenshot here)*
+### Terraform Deployment
+![Terraform Deployment Success](docs/images/terraform-success.png)
+
+### Azure Virtual Machine
+![Azure VM Deployment](docs/images/azure-vm.png)
+
+### GitHub Repository Overview
+![GitHub Overview](docs/images/github-overview.png)
 
 ---
 
